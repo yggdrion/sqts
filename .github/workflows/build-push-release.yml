@@ -64,9 +64,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       packages: write
-    strategy:
-      matrix:
-        component: [server, client]
     steps:
       - name: Checkout code 🌿
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
@@ -87,12 +84,12 @@ jobs:
       - name: Build and push multi-arch image 🐳
         run: |
           docker buildx build --platform linux/amd64,linux/arm64 \
-            -t ghcr.io/${{ github.repository }}/${{ matrix.component }}:${{ needs.setup.outputs.version }} \
-            -t ghcr.io/${{ github.repository }}/${{ matrix.component }}:latest \
-            -f cmd/${{ matrix.component }}/Dockerfile \
+            -t ghcr.io/${{ github.repository }}:${{ needs.setup.outputs.version }} \
+            -t ghcr.io/${{ github.repository }}:latest \
+            -f Dockerfile \
             --push \
-            --cache-from=type=gha,scope=${{ matrix.component }} \
-            --cache-to=type=gha,mode=max,scope=${{ matrix.component }} .
+            --cache-from=type=gha \
+            --cache-to=type=gha,mode=max .
 
   # Release job
   release:
