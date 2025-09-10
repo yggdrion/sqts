@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -8,13 +9,13 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"golang.org/x/time/rate"
 )
 
 // Server represents a server configuration
@@ -70,20 +71,32 @@ var (
 
 // MetricsCollector handles collecting metrics from BattleMetrics API
 type MetricsCollector struct {
-	servers    []Server
-	httpClient *http.Client
+	servers     []Server
+	httpClient  *http.Client
+	rateLimiter *rate.Limiter
 }
 
-// NewMetricsCollector creates a new metrics collector
+// NewMetricsCollector creates a new metrics collector with rate limiting
 func NewMetricsCollector(servers []Server) *MetricsCollector {
+	// BattleMetrics limits: 60 requests/minute, 15 requests/second
+	// We'll use 1 request per second average with burst of 10 to be safe
+	rateLimiter := rate.NewLimiter(rate.Every(time.Second), 10)
+
 	return &MetricsCollector{
-		servers:    servers,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
+		servers:     servers,
+		httpClient:  &http.Client{Timeout: 10 * time.Second},
+		rateLimiter: rateLimiter,
 	}
 }
 
 // fetchServerData fetches data from BattleMetrics API for a single server
 func (mc *MetricsCollector) fetchServerData(server Server) error {
+	// Wait for rate limiter permission
+	ctx := context.Background()
+	if err := mc.rateLimiter.Wait(ctx); err != nil {
+		return fmt.Errorf("rate limiter error for server %s: %w", server.Name, err)
+	}
+
 	resp, err := mc.httpClient.Get(server.URL)
 	if err != nil {
 		scrapeErrors.WithLabelValues(server.Name).Inc()
@@ -130,21 +143,18 @@ func (mc *MetricsCollector) updateMetrics(serverName string, resp BattleMetricsR
 	).Set(float64(attrs.Players))
 }
 
-// collectMetrics fetches data for all servers
+// collectMetrics fetches data for all servers with rate limiting
 func (mc *MetricsCollector) collectMetrics() {
-	var wg sync.WaitGroup
+	log.Printf("Starting metrics collection for %d servers", len(mc.servers))
 
+	// Process servers sequentially to respect rate limits
 	for _, server := range mc.servers {
-		wg.Add(1)
-		go func(s Server) {
-			defer wg.Done()
-			if err := mc.fetchServerData(s); err != nil {
-				log.Printf("Error fetching data for server %s: %v", s.Name, err)
-			}
-		}(server)
+		if err := mc.fetchServerData(server); err != nil {
+			log.Printf("Error fetching data for server %s: %v", server.Name, err)
+		}
 	}
 
-	wg.Wait()
+	log.Printf("Completed metrics collection")
 }
 
 // startMetricsCollection starts a goroutine that periodically collects metrics
@@ -182,6 +192,7 @@ func main() {
 	}
 
 	log.Printf("Loaded %d servers", len(servers))
+	log.Printf("Rate limiting: 1 request/second, collection will take ~%d seconds", len(servers))
 
 	// Register Prometheus metrics
 	prometheus.MustRegister(fridaSquadPlayerCount, scrapeErrors)
@@ -189,8 +200,8 @@ func main() {
 	// Create metrics collector
 	collector := NewMetricsCollector(servers)
 
-	// Start collecting metrics every 30 seconds
-	collector.startMetricsCollection(30 * time.Second)
+	// Start collecting metrics every 60 seconds (gives enough time for all 12 servers)
+	collector.startMetricsCollection(60 * time.Second)
 
 	// Setup Chi router
 	r := chi.NewRouter()
