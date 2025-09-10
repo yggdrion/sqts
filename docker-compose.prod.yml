@@ -1,0 +1,11 @@
+services:
+  sqts:
+    image: ghcr.io/yggdrion/sqts:latest
+    container_name: sqts
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./servers.json:/app/servers.json:ro
+    environment:
+      - PORT=8080

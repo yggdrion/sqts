@@ -1,0 +1,8 @@
+services:
+  sqts:
+    build: .
+    container_name: sqts
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./servers.json:/app/servers.json:ro
