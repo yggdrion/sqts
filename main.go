@@ -8,7 +8,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -55,7 +54,22 @@ var (
 			"game_mode",
 			"team_one",
 			"team_two",
-			"round_time",
+			"event_type",
+		},
+	)
+
+	fridaSquadPlayTime = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "frida_squad_play_time_seconds",
+			Help: "Current round play time in seconds",
+		},
+		[]string{
+			"server_short_name",
+			"server_full_name",
+			"map_name",
+			"game_mode",
+			"team_one",
+			"team_two",
 			"event_type",
 		},
 	)
@@ -134,17 +148,25 @@ func (mc *MetricsCollector) fetchServerData(server Server) error {
 func (mc *MetricsCollector) updateMetrics(serverName string, resp BattleMetricsResponse) {
 	attrs := resp.Data.Attributes
 
-	// Create the metric with the required labels
+	// Common labels for both metrics
+	labels := []string{
+		serverName,                 // server_short_name
+		attrs.Name,                 // server_full_name
+		attrs.Details.Map,          // map_name
+		attrs.Details.GameMode,     // game_mode
+		attrs.Details.SquadTeamOne, // team_one
+		attrs.Details.SquadTeamTwo, // team_two
+	}
+
+	// Player count metric
 	fridaSquadPlayerCount.WithLabelValues(
-		serverName,                                // server_short_name
-		attrs.Name,                                // server_full_name
-		attrs.Details.Map,                         // map_name
-		attrs.Details.GameMode,                    // game_mode
-		attrs.Details.SquadTeamOne,                // team_one
-		attrs.Details.SquadTeamTwo,                // team_two
-		strconv.Itoa(attrs.Details.SquadPlayTime), // round_time
-		"player_count",                            // event_type
+		append(labels, "player_count")..., // event_type
 	).Set(float64(attrs.Players))
+
+	// Play time metric
+	fridaSquadPlayTime.WithLabelValues(
+		append(labels, "play_time")..., // event_type
+	).Set(float64(attrs.Details.SquadPlayTime))
 }
 
 // collectMetrics fetches data for all servers with rate limiting
@@ -199,7 +221,7 @@ func main() {
 	log.Printf("Rate limiting: 1 request/second, collection will take ~%d seconds", len(servers))
 
 	// Register Prometheus metrics
-	prometheus.MustRegister(fridaSquadPlayerCount, scrapeErrors)
+	prometheus.MustRegister(fridaSquadPlayerCount, fridaSquadPlayTime, scrapeErrors)
 
 	// Create metrics collector
 	collector := NewMetricsCollector(servers)
