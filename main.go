@@ -102,7 +102,11 @@ func (mc *MetricsCollector) fetchServerData(server Server) error {
 		scrapeErrors.WithLabelValues(server.Name).Inc()
 		return fmt.Errorf("failed to fetch data for server %s: %w", server.Name, err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			log.Printf("Failed to close response body for server %s: %v", server.Name, closeErr)
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		scrapeErrors.WithLabelValues(server.Name).Inc()
@@ -209,11 +213,14 @@ func main() {
 	r.Handle("/metrics", promhttp.Handler())
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		if err := json.NewEncoder(w).Encode(map[string]interface{}{
 			"service":   "Squad Server Metrics",
 			"servers":   len(servers),
 			"endpoints": []string{"/metrics", "/health"},
-		})
+		}); err != nil {
+			log.Printf("Failed to encode JSON response: %v", err)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		}
 	})
 
 	port := "8080"
