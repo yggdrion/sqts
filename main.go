@@ -42,20 +42,13 @@ type BattleMetricsResponse struct {
 
 // Prometheus metrics
 var (
+	// Main metrics with stable labels only
 	fridaSquadPlayerCount = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "frida_squad_player_count",
 			Help: "Number of players on the squad server",
 		},
-		[]string{
-			"server_short_name",
-			"server_full_name",
-			"map_name",
-			"game_mode",
-			"team_one",
-			"team_two",
-			"event_type",
-		},
+		[]string{"server_short_name"},
 	)
 
 	fridaSquadPlayTime = prometheus.NewGaugeVec(
@@ -63,6 +56,15 @@ var (
 			Name: "frida_squad_play_time_seconds",
 			Help: "Current round play time in seconds",
 		},
+		[]string{"server_short_name"},
+	)
+
+	// Info metric for server metadata (labels change infrequently)
+	fridaSquadServerInfo = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "frida_squad_server_info",
+			Help: "Server information and metadata",
+		},
 		[]string{
 			"server_short_name",
 			"server_full_name",
@@ -70,7 +72,6 @@ var (
 			"game_mode",
 			"team_one",
 			"team_two",
-			"event_type",
 		},
 	)
 
@@ -148,25 +149,19 @@ func (mc *MetricsCollector) fetchServerData(server Server) error {
 func (mc *MetricsCollector) updateMetrics(serverName string, resp BattleMetricsResponse) {
 	attrs := resp.Data.Attributes
 
-	// Common labels for both metrics
-	labels := []string{
+	// Update main metrics with stable labels only
+	fridaSquadPlayerCount.WithLabelValues(serverName).Set(float64(attrs.Players))
+	fridaSquadPlayTime.WithLabelValues(serverName).Set(float64(attrs.Details.SquadPlayTime))
+
+	// Update info metric with current metadata (value is always 1)
+	fridaSquadServerInfo.WithLabelValues(
 		serverName,                 // server_short_name
 		attrs.Name,                 // server_full_name
 		attrs.Details.Map,          // map_name
 		attrs.Details.GameMode,     // game_mode
 		attrs.Details.SquadTeamOne, // team_one
 		attrs.Details.SquadTeamTwo, // team_two
-	}
-
-	// Player count metric
-	fridaSquadPlayerCount.WithLabelValues(
-		append(labels, "player_count")..., // event_type
-	).Set(float64(attrs.Players))
-
-	// Play time metric
-	fridaSquadPlayTime.WithLabelValues(
-		append(labels, "play_time")..., // event_type
-	).Set(float64(attrs.Details.SquadPlayTime))
+	).Set(1)
 }
 
 // collectMetrics fetches data for all servers with rate limiting
@@ -221,7 +216,7 @@ func main() {
 	log.Printf("Rate limiting: 1 request/second, collection will take ~%d seconds", len(servers))
 
 	// Register Prometheus metrics
-	prometheus.MustRegister(fridaSquadPlayerCount, fridaSquadPlayTime, scrapeErrors)
+	prometheus.MustRegister(fridaSquadPlayerCount, fridaSquadPlayTime, fridaSquadServerInfo, scrapeErrors)
 
 	// Create metrics collector
 	collector := NewMetricsCollector(servers)
