@@ -1,3 +1,11 @@
+## [1.0.1](https://github.com/yggdrion/sqts/compare/v1.0.0...v1.0.1) (2025-09-11)
+
+### Bug Fixes
+
+* golangci-lint errors ([52f32a0](https://github.com/yggdrion/sqts/commit/52f32a0b77590ef87512584b89a048fff813babb))
+* metrics optimization ([20af26a](https://github.com/yggdrion/sqts/commit/20af26abc9f83f5058bcf1c7f8672e8b2ff01276))
+* roundtime ([f306b3f](https://github.com/yggdrion/sqts/commit/f306b3f1303913b26a42cb0c1f7f7b9d0aa30815))
+
 ## 1.0.0 (2025-09-10)
 
 ### Bug Fixes
