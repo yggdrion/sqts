@@ -1,3 +1,9 @@
+## [1.0.2](https://github.com/yggdrion/sqts/compare/v1.0.1...v1.0.2) (2025-09-11)
+
+### Bug Fixes
+
+* naming ([b7abd37](https://github.com/yggdrion/sqts/commit/b7abd371ec9e6c2c9bbe49188a9a17292cd8c9d3))
+
 ## [1.0.1](https://github.com/yggdrion/sqts/compare/v1.0.0...v1.0.1) (2025-09-11)
 
 ### Bug Fixes
