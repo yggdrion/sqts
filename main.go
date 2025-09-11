@@ -45,7 +45,7 @@ var (
 	// Main metrics with stable labels only
 	fridaSquadPlayerCount = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "frida_squad_player_count",
+			Name: "sqts_squad_player_count",
 			Help: "Number of players on the squad server",
 		},
 		[]string{"server_short_name"},
@@ -53,7 +53,7 @@ var (
 
 	fridaSquadPlayTime = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "frida_squad_play_time_seconds",
+			Name: "sqts_squad_play_time_seconds",
 			Help: "Current round play time in seconds",
 		},
 		[]string{"server_short_name"},
@@ -62,7 +62,7 @@ var (
 	// Info metric for server metadata (labels change infrequently)
 	fridaSquadServerInfo = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "frida_squad_server_info",
+			Name: "sqts_squad_server_info",
 			Help: "Server information and metadata",
 		},
 		[]string{
