@@ -104,19 +104,19 @@ var (
 
 // MetricsCollector handles collecting metrics from BattleMetrics API
 type MetricsCollector struct {
-	servers     []Server
+	serversFile string
 	httpClient  *http.Client
 	rateLimiter *rate.Limiter
 }
 
 // NewMetricsCollector creates a new metrics collector with rate limiting
-func NewMetricsCollector(servers []Server) *MetricsCollector {
+func NewMetricsCollector(serversFile string) *MetricsCollector {
 	// BattleMetrics limits: 60 requests/minute, 15 requests/second
 	// We'll use 1 request per second average with burst of 10 to be safe
 	rateLimiter := rate.NewLimiter(rate.Every(time.Second), 10)
 
 	return &MetricsCollector{
-		servers:     servers,
+		serversFile: serversFile,
 		httpClient:  &http.Client{Timeout: 10 * time.Second},
 		rateLimiter: rateLimiter,
 	}
@@ -202,10 +202,17 @@ func (mc *MetricsCollector) updateMetrics(serverName string, resp BattleMetricsR
 
 // collectMetrics fetches data for all servers with rate limiting
 func (mc *MetricsCollector) collectMetrics() {
-	log.Printf("Starting metrics collection for %d servers", len(mc.servers))
+	// Reload servers from file before each collection
+	servers, err := loadServers(mc.serversFile)
+	if err != nil {
+		log.Printf("Failed to reload servers from %s: %v", mc.serversFile, err)
+		return
+	}
+
+	log.Printf("Starting metrics collection for %d servers (reloaded from %s)", len(servers), mc.serversFile)
 
 	// Process servers sequentially to respect rate limits
-	for _, server := range mc.servers {
+	for _, server := range servers {
 		if err := mc.fetchServerData(server); err != nil {
 			log.Printf("Error fetching data for server %s: %v", server.Name, err)
 		}
@@ -242,14 +249,14 @@ func loadServers(filename string) ([]Server, error) {
 }
 
 func main() {
-	// Load server configurations
+	// Load server configurations initially to verify file format
 	servers, err := loadServers("servers.json")
 	if err != nil {
 		log.Fatalf("Failed to load servers: %v", err)
 	}
 
-	log.Printf("Loaded %d servers", len(servers))
-	log.Printf("Rate limiting: 1 request/second, collection will take ~%d seconds", len(servers))
+	log.Printf("Initial load: %d servers", len(servers))
+	log.Printf("Rate limiting: 1 request/second, servers will be reloaded before each collection")
 
 	// Register Prometheus metrics
 	prometheus.MustRegister(
@@ -262,8 +269,8 @@ func main() {
 		scrapeErrors,
 	)
 
-	// Create metrics collector
-	collector := NewMetricsCollector(servers)
+	// Create metrics collector with filename
+	collector := NewMetricsCollector("servers.json")
 
 	// Start collecting metrics every 60 seconds (gives enough time for all 12 servers)
 	collector.startMetricsCollection(60 * time.Second)
@@ -274,9 +281,18 @@ func main() {
 	r.Handle("/metrics", promhttp.Handler())
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+
+		// Load current server count
+		currentServers, err := loadServers("servers.json")
+		serverCount := 0
+		if err == nil {
+			serverCount = len(currentServers)
+		}
+
 		if err := json.NewEncoder(w).Encode(map[string]interface{}{
 			"service":   "Squad Server Metrics",
-			"servers":   len(servers),
+			"servers":   serverCount,
+			"note":      "Servers are reloaded from servers.json before each collection",
 			"endpoints": []string{"/metrics", "/health"},
 		}); err != nil {
 			log.Printf("Failed to encode JSON response: %v", err)
