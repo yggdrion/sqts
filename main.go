@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -109,6 +110,8 @@ type MetricsCollector struct {
 	rateLimiter     *rate.Limiter
 	lastServerCount int
 	ticker          *time.Ticker
+	rateLimitHits   int
+	lastRateLimit   time.Time
 }
 
 // NewMetricsCollector creates a new metrics collector with rate limiting
@@ -148,6 +151,21 @@ func (mc *MetricsCollector) fetchServerData(server Server) error {
 
 	if resp.StatusCode != http.StatusOK {
 		scrapeErrors.WithLabelValues(server.Name).Inc()
+
+		// Handle rate limiting specifically
+		if resp.StatusCode == 429 || resp.StatusCode == 503 {
+			// Read rate limit headers if available
+			retryAfter := resp.Header.Get("Retry-After")
+			rateLimitRemaining := resp.Header.Get("X-RateLimit-Remaining")
+
+			log.Printf("⚠️  Rate limit hit for server %s (HTTP %d). Retry-After: %s, Remaining: %s",
+				server.Name, resp.StatusCode, retryAfter, rateLimitRemaining)
+
+			// Return specific rate limit error
+			return fmt.Errorf("rate limit exceeded for server %s (HTTP %d), retry after: %s",
+				server.Name, resp.StatusCode, retryAfter)
+		}
+
 		return fmt.Errorf("unexpected status code %d for server %s", resp.StatusCode, server.Name)
 	}
 
@@ -231,18 +249,44 @@ func (mc *MetricsCollector) collectMetrics() {
 
 	log.Printf("Starting metrics collection for %d servers (reloaded from %s)", len(servers), mc.serversFile)
 
+	// Check if we recently hit rate limits and should back off
+	if time.Since(mc.lastRateLimit) < 30*time.Second && mc.rateLimitHits > 0 {
+		log.Printf("🚨 Recently hit rate limits (%d times), backing off for 30s", mc.rateLimitHits)
+		return
+	}
+
 	// Process servers sequentially to respect rate limits
 	successCount := 0
+	rateLimitCount := 0
 	for _, server := range servers {
 		if err := mc.fetchServerData(server); err != nil {
+			// Check if this was a rate limit error
+			if strings.Contains(err.Error(), "rate limit exceeded") {
+				rateLimitCount++
+				mc.rateLimitHits++
+				mc.lastRateLimit = time.Now()
+
+				log.Printf("🚨 Rate limit detected! Stopping collection early to prevent further violations")
+				break // Stop processing more servers
+			}
 			log.Printf("Error fetching data for server %s: %v", server.Name, err)
 		} else {
 			successCount++
+			// Reset rate limit counter on successful request
+			if mc.rateLimitHits > 0 {
+				mc.rateLimitHits = 0
+				log.Printf("✅ Rate limit counter reset after successful request")
+			}
 		}
 	}
 
 	duration := time.Since(startTime)
-	log.Printf("Completed metrics collection: %d/%d servers successful in %v", successCount, len(servers), duration)
+	if rateLimitCount > 0 {
+		log.Printf("⚠️  Collection completed: %d/%d servers successful, %d rate limits hit, in %v",
+			successCount, len(servers), rateLimitCount, duration)
+	} else {
+		log.Printf("✅ Collection completed: %d/%d servers successful in %v", successCount, len(servers), duration)
+	}
 }
 
 // startMetricsCollection starts a goroutine that periodically collects metrics
