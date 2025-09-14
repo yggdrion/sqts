@@ -104,21 +104,26 @@ var (
 
 // MetricsCollector handles collecting metrics from BattleMetrics API
 type MetricsCollector struct {
-	serversFile string
-	httpClient  *http.Client
-	rateLimiter *rate.Limiter
+	serversFile     string
+	httpClient      *http.Client
+	rateLimiter     *rate.Limiter
+	lastServerCount int
+	ticker          *time.Ticker
 }
 
 // NewMetricsCollector creates a new metrics collector with rate limiting
 func NewMetricsCollector(serversFile string) *MetricsCollector {
-	// BattleMetrics limits: 60 requests/minute, 15 requests/second
-	// We'll use 1 request per second average with burst of 10 to be safe
-	rateLimiter := rate.NewLimiter(rate.Every(time.Second), 10)
+	// BattleMetrics limits: 60 requests/minute (1/sec), 15 requests/second burst
+	// Optimize for maximum collection frequency while respecting limits
+	// - Burst: 15 requests (allows collecting all servers quickly)
+	// - Refill: 1 request/second (stays within 60/minute limit)
+	rateLimiter := rate.NewLimiter(rate.Every(time.Second), 15)
 
 	return &MetricsCollector{
-		serversFile: serversFile,
-		httpClient:  &http.Client{Timeout: 10 * time.Second},
-		rateLimiter: rateLimiter,
+		serversFile:     serversFile,
+		httpClient:      &http.Client{Timeout: 10 * time.Second},
+		rateLimiter:     rateLimiter,
+		lastServerCount: -1, // Initialize to -1 to force interval calculation on first run
 	}
 }
 
@@ -202,6 +207,8 @@ func (mc *MetricsCollector) updateMetrics(serverName string, resp BattleMetricsR
 
 // collectMetrics fetches data for all servers with rate limiting
 func (mc *MetricsCollector) collectMetrics() {
+	startTime := time.Now()
+
 	// Reload servers from file before each collection
 	servers, err := loadServers(mc.serversFile)
 	if err != nil {
@@ -209,26 +216,43 @@ func (mc *MetricsCollector) collectMetrics() {
 		return
 	}
 
+	// Check if server count changed and adjust interval if needed
+	if len(servers) != mc.lastServerCount {
+		newInterval := calculateOptimalInterval(len(servers))
+		log.Printf("Server count changed: %d → %d, adjusting interval to %v",
+			mc.lastServerCount, len(servers), newInterval)
+
+		// Reset ticker with new interval
+		if mc.ticker != nil {
+			mc.ticker.Reset(newInterval)
+		}
+		mc.lastServerCount = len(servers)
+	}
+
 	log.Printf("Starting metrics collection for %d servers (reloaded from %s)", len(servers), mc.serversFile)
 
 	// Process servers sequentially to respect rate limits
+	successCount := 0
 	for _, server := range servers {
 		if err := mc.fetchServerData(server); err != nil {
 			log.Printf("Error fetching data for server %s: %v", server.Name, err)
+		} else {
+			successCount++
 		}
 	}
 
-	log.Printf("Completed metrics collection")
+	duration := time.Since(startTime)
+	log.Printf("Completed metrics collection: %d/%d servers successful in %v", successCount, len(servers), duration)
 }
 
 // startMetricsCollection starts a goroutine that periodically collects metrics
 func (mc *MetricsCollector) startMetricsCollection(interval time.Duration) {
-	ticker := time.NewTicker(interval)
+	mc.ticker = time.NewTicker(interval)
 	go func() {
 		// Collect metrics immediately on startup
 		mc.collectMetrics()
 
-		for range ticker.C {
+		for range mc.ticker.C {
 			mc.collectMetrics()
 		}
 	}()
@@ -248,6 +272,34 @@ func loadServers(filename string) ([]Server, error) {
 	return servers, nil
 }
 
+// calculateOptimalInterval calculates the best collection interval based on server count
+// BattleMetrics: 15 req/sec burst, 1 req/sec refill (60/minute)
+func calculateOptimalInterval(serverCount int) time.Duration {
+	const burstLimit = 15
+
+	if serverCount == 0 {
+		return 60 * time.Second // Default fallback
+	}
+
+	// If we have fewer servers than burst limit, we can collect more frequently
+	if serverCount <= burstLimit {
+		// Time to refill tokens for next full collection
+		tokensNeeded := serverCount
+		refillTime := time.Duration(tokensNeeded) * time.Second
+
+		// Add small buffer (2 seconds) for network delays and safety margin
+		return refillTime + 2*time.Second
+	}
+
+	// If we have more servers than burst limit, we need multiple bursts
+	// This is a more complex scenario - for now, use conservative timing
+	burstsNeeded := (serverCount + burstLimit - 1) / burstLimit // Ceiling division
+	totalTime := time.Duration(burstsNeeded*burstLimit) * time.Second
+
+	// Add buffer for safety
+	return totalTime + 5*time.Second
+}
+
 func main() {
 	// Load server configurations initially to verify file format
 	servers, err := loadServers("servers.json")
@@ -255,8 +307,13 @@ func main() {
 		log.Fatalf("Failed to load servers: %v", err)
 	}
 
+	// Calculate optimal collection interval based on server count
+	interval := calculateOptimalInterval(len(servers))
+
 	log.Printf("Initial load: %d servers", len(servers))
-	log.Printf("Rate limiting: 1 request/second, servers will be reloaded before each collection")
+	log.Printf("Rate limiting: 15 req/sec burst, 1 req/sec refill")
+	log.Printf("Optimal collection interval: %v (based on %d servers)", interval, len(servers))
+	log.Printf("Servers will be reloaded before each collection - interval may adjust dynamically")
 
 	// Register Prometheus metrics
 	prometheus.MustRegister(
@@ -272,8 +329,8 @@ func main() {
 	// Create metrics collector with filename
 	collector := NewMetricsCollector("servers.json")
 
-	// Start collecting metrics every 60 seconds (gives enough time for all 12 servers)
-	collector.startMetricsCollection(60 * time.Second)
+	// Start collecting metrics with dynamic interval
+	collector.startMetricsCollection(interval)
 
 	// Setup Chi router
 	r := chi.NewRouter()
