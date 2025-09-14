@@ -1,3 +1,15 @@
+## [1.1.0](https://github.com/yggdrion/sqts/compare/v1.0.2...v1.1.0) (2025-09-14)
+
+### Bug Fixes
+
+* rate limit ([d9e901d](https://github.com/yggdrion/sqts/commit/d9e901d527d042e650136f5190b6c03eab5e7f2f))
+* rate limit error handling ([0b827ad](https://github.com/yggdrion/sqts/commit/0b827ad0f834e950d62a9555304f45b5ea7e0c63))
+* reload servers ([7cf96af](https://github.com/yggdrion/sqts/commit/7cf96afe93847890cf7759132528d81506e22bae))
+
+### Features
+
+* new metric structure ([7cf41ec](https://github.com/yggdrion/sqts/commit/7cf41ec6d929bb4c8930160c824d78ff281b0fd5))
+
 ## [1.0.2](https://github.com/yggdrion/sqts/compare/v1.0.1...v1.0.2) (2025-09-11)
 
 ### Bug Fixes
