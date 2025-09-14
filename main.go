@@ -59,20 +59,38 @@ var (
 		[]string{"server_short_name"},
 	)
 
-	// Info metric for server metadata (labels change infrequently)
+	// Static server info (rarely changes)
 	fridaSquadServerInfo = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "sqts_squad_server_info",
-			Help: "Server information and metadata",
+			Help: "Static server information",
 		},
-		[]string{
-			"server_short_name",
-			"server_full_name",
-			"map_name",
-			"game_mode",
-			"team_one",
-			"team_two",
+		[]string{"server_short_name", "server_full_name"},
+	)
+
+	// Dynamic game state metrics
+	fridaSquadCurrentMap = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "sqts_squad_current_map",
+			Help: "Current map being played (value is always 1)",
 		},
+		[]string{"server_short_name", "map_name"},
+	)
+
+	fridaSquadCurrentGameMode = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "sqts_squad_current_game_mode",
+			Help: "Current game mode (value is always 1)",
+		},
+		[]string{"server_short_name", "game_mode"},
+	)
+
+	fridaSquadCurrentTeams = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "sqts_squad_current_teams",
+			Help: "Current team configuration (value is always 1)",
+		},
+		[]string{"server_short_name", "team_one", "team_two"},
 	)
 
 	scrapeErrors = prometheus.NewCounterVec(
@@ -153,12 +171,30 @@ func (mc *MetricsCollector) updateMetrics(serverName string, resp BattleMetricsR
 	fridaSquadPlayerCount.WithLabelValues(serverName).Set(float64(attrs.Players))
 	fridaSquadPlayTime.WithLabelValues(serverName).Set(float64(attrs.Details.SquadPlayTime))
 
-	// Update info metric with current metadata (value is always 1)
+	// Update static server info (value is always 1)
 	fridaSquadServerInfo.WithLabelValues(
+		serverName, // server_short_name
+		attrs.Name, // server_full_name
+	).Set(1)
+
+	// Clear previous dynamic state metrics for this server to prevent stale data
+	fridaSquadCurrentMap.DeletePartialMatch(prometheus.Labels{"server_short_name": serverName})
+	fridaSquadCurrentGameMode.DeletePartialMatch(prometheus.Labels{"server_short_name": serverName})
+	fridaSquadCurrentTeams.DeletePartialMatch(prometheus.Labels{"server_short_name": serverName})
+
+	// Update dynamic game state metrics
+	fridaSquadCurrentMap.WithLabelValues(
+		serverName,        // server_short_name
+		attrs.Details.Map, // map_name
+	).Set(1)
+
+	fridaSquadCurrentGameMode.WithLabelValues(
+		serverName,             // server_short_name
+		attrs.Details.GameMode, // game_mode
+	).Set(1)
+
+	fridaSquadCurrentTeams.WithLabelValues(
 		serverName,                 // server_short_name
-		attrs.Name,                 // server_full_name
-		attrs.Details.Map,          // map_name
-		attrs.Details.GameMode,     // game_mode
 		attrs.Details.SquadTeamOne, // team_one
 		attrs.Details.SquadTeamTwo, // team_two
 	).Set(1)
@@ -216,7 +252,15 @@ func main() {
 	log.Printf("Rate limiting: 1 request/second, collection will take ~%d seconds", len(servers))
 
 	// Register Prometheus metrics
-	prometheus.MustRegister(fridaSquadPlayerCount, fridaSquadPlayTime, fridaSquadServerInfo, scrapeErrors)
+	prometheus.MustRegister(
+		fridaSquadPlayerCount,
+		fridaSquadPlayTime,
+		fridaSquadServerInfo,
+		fridaSquadCurrentMap,
+		fridaSquadCurrentGameMode,
+		fridaSquadCurrentTeams,
+		scrapeErrors,
+	)
 
 	// Create metrics collector
 	collector := NewMetricsCollector(servers)
